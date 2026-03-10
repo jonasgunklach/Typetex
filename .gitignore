@@ -1,0 +1,20 @@
+# Xcode
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.xcbkptlist
+build/
+DerivedData/
+*.hmap
+*.ipa
+
+# Swift Package Manager
+.build/
+.swiftpm/xcode/
+
+# Compiled static libraries — build from source (see README)
+**/*.a
+
+# macOS
+.DS_Store
+.AppleDouble
