@@ -1,0 +1,4 @@
+module tectonic_ffi {
+    header "tectonic_ffi.h"
+    export *
+}
