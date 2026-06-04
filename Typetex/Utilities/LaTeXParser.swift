@@ -65,35 +65,221 @@ struct CompileMessage: Identifiable {
 
 // MARK: - AST types
 
+/// Options for list environments (enumitem-style)
+struct ListOptions {
+    var label: String?         // e.g. "\\alph*", "\\Roman*", "\\faCheck"
+    var noitemsep: Bool = false
+    var leftmargin: CGFloat?
+    var start: Int?            // starting counter for enumerate
+    var topsep: CGFloat?
+
+    static let `default` = ListOptions()
+
+    init(label: String? = nil, noitemsep: Bool = false,
+         leftmargin: CGFloat? = nil, start: Int? = nil, topsep: CGFloat? = nil) {
+        self.label = label; self.noitemsep = noitemsep
+        self.leftmargin = leftmargin; self.start = start; self.topsep = topsep
+    }
+
+    init(parsing optStr: String) {
+        let pairs = optStr.components(separatedBy: ",")
+        for pair in pairs {
+            let kv = pair.components(separatedBy: "=").map { $0.trimmingCharacters(in: .whitespaces) }
+            if kv.count == 2 {
+                switch kv[0] {
+                case "label":       label = kv[1]
+                case "leftmargin":  leftmargin = CGFloat(Double(kv[1]) ?? 0)
+                case "start":       start = Int(kv[1])
+                case "topsep":      topsep = CGFloat(Double(kv[1]) ?? 0)
+                default: break
+                }
+            } else if kv.count == 1 {
+                if kv[0] == "noitemsep" || kv[0] == "nosep" { noitemsep = true }
+            }
+        }
+    }
+}
+
+/// Tcolorbox render options
+struct TcolorboxOptions {
+    var colback: TeXColor = .white
+    var colframe: TeXColor = TeXColor(r: 0.3, g: 0.3, b: 0.8, a: 1)
+    var coltitle: TeXColor = .white
+    var colbacktitle: TeXColor = TeXColor(r: 0.3, g: 0.3, b: 0.8, a: 1)
+    var title: String = ""
+    var cornerRadius: CGFloat = 2
+    var borderWidth: CGFloat = 0.8
+
+    init(parsing optStr: String) {
+        let pairs = optStr.components(separatedBy: ",")
+        for pair in pairs {
+            let kv = pair.components(separatedBy: "=").map { $0.trimmingCharacters(in: .whitespaces) }
+            if kv.count >= 2 {
+                switch kv[0] {
+                case "colback":      colback = TeXColor.parse(kv[1])
+                case "colframe":     colframe = TeXColor.parse(kv[1])
+                case "coltitle":     coltitle = TeXColor.parse(kv[1])
+                case "colbacktitle": colbacktitle = TeXColor.parse(kv[1])
+                case "title":        title = kv[1]
+                case "arc":
+                    let s = kv[1].replacingOccurrences(of: "mm", with: "").replacingOccurrences(of: "pt", with: "")
+                    cornerRadius = CGFloat(Double(s) ?? 2)
+                default: break
+                }
+            } else if kv.count == 1 {
+                let v = kv[0]
+                if v.hasPrefix("title=") { title = String(v.dropFirst(6)) }
+            }
+        }
+    }
+}
+
+/// Listings options
+struct ListingsOptions {
+    var language: String = ""
+    var caption: String = ""
+    var label: String = ""
+    var basicstyle: String = ""
+    var numbers: String = "none"
+    var frame: String = "none"
+    var backgroundcolor: TeXColor?
+
+    init(parsing optStr: String) {
+        let pairs = optStr.components(separatedBy: ",")
+        for pair in pairs {
+            let kv = pair.components(separatedBy: "=").map { $0.trimmingCharacters(in: .whitespaces) }
+            if kv.count >= 2 {
+                switch kv[0].lowercased() {
+                case "language":    language = kv[1]
+                case "caption":     caption = kv[1]
+                case "label":       label = kv[1]
+                case "numbers":     numbers = kv[1]
+                case "frame":       frame = kv[1]
+                default: break
+                }
+            }
+        }
+    }
+}
+
 indirect enum TexBlock {
+    // Core blocks
     case heading(level: Int, numbered: Bool, inlines: [TexInline])
     case paragraph([TexInline])
     case mathDisplay(String)
     case codeBlock(String)
-    case bulletList(items: [[TexBlock]])
-    case numberedList(items: [[TexBlock]])
+    case verbatimBlock(code: String, options: ListingsOptions)
+    case bulletList(items: [[TexBlock]], options: ListOptions)
+    case numberedList(items: [[TexBlock]], options: ListOptions)
+    case descriptionList(items: [(label: [TexInline], body: [TexBlock])])
     case blockQuote([TexBlock])
     case thematicBreak
-    // New: document metadata & structure
+    // Document structure
     case documentMetadata(title: String, authors: [String], date: String?)
     case abstract([TexBlock])
-    case titleBlock                               // marker: emit title+abstract here
+    case titleBlock
+    // Rich content
     case table(header: [[TexInline]], rows: [[[TexInline]]], spec: String)
+    case tableDetailed(rows: [TableRowData], spec: String, booktabs: Bool)
     case figure(src: String?, caption: [TexInline])
+    case figureDetailed(src: String?, options: GraphicxOptions, caption: [TexInline], label: String?)
+    // Color & boxes
+    case coloredBlock(color: TeXColor, content: [TexBlock])
+    case tcolorboxBlock(options: TcolorboxOptions, content: [TexBlock])
+    // Spacing
+    case vspace(CGFloat)
+    case hspace(CGFloat)
+    case pageBreak
+    case newPage
+    // Other
+    case comment        // stripped content
+}
+
+/// Detailed table row for full grid rendering
+struct TableRowData {
+    enum RowKind: Equatable { case none, data, hline, toprule, midrule, bottomrule, cmidrule(Int, Int) }
+    var cells: [[TexInline]]
+    var kind: RowKind
+    var cellAlignments: [String]
+}
+
+/// graphicx \includegraphics options
+struct GraphicxOptions {
+    var width: GraphicxDim?
+    var height: GraphicxDim?
+    var scale: CGFloat?
+    var angle: CGFloat?
+    var keepAspectRatio: Bool = true
+
+    enum GraphicxDim {
+        case points(CGFloat)
+        case textwidthFraction(CGFloat)  // e.g. 0.8\textwidth
+    }
+
+    init(parsing optStr: String) {
+        let pairs = optStr.components(separatedBy: ",")
+        for pair in pairs {
+            let kv = pair.components(separatedBy: "=").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard kv.count == 2 else { continue }
+            switch kv[0] {
+            case "width":
+                width = parseDim(kv[1])
+            case "height":
+                height = parseDim(kv[1])
+            case "scale":
+                scale = CGFloat(Double(kv[1]) ?? 1)
+            case "angle":
+                angle = CGFloat(Double(kv[1]) ?? 0)
+            case "keepaspectratio":
+                keepAspectRatio = kv[1] != "false"
+            default:
+                break
+            }
+        }
+    }
+
+    private func parseDim(_ s: String) -> GraphicxDim? {
+        if s.hasSuffix("\\textwidth"),
+           let frac = Double(s.replacingOccurrences(of: "\\textwidth", with: "").trimmingCharacters(in: .whitespaces)) {
+            return .textwidthFraction(CGFloat(frac))
+        }
+        if s.hasSuffix("\\linewidth"),
+           let frac = Double(s.replacingOccurrences(of: "\\linewidth", with: "").trimmingCharacters(in: .whitespaces)) {
+            return .textwidthFraction(CGFloat(frac))
+        }
+        let ptPerCm = 28.3465; let ptPerIn = 72.0
+        if s.hasSuffix("cm"), let v = Double(s.dropLast(2)) { return .points(CGFloat(v * ptPerCm)) }
+        if s.hasSuffix("in"), let v = Double(s.dropLast(2)) { return .points(CGFloat(v * ptPerIn)) }
+        if s.hasSuffix("mm"), let v = Double(s.dropLast(2)) { return .points(CGFloat(v * ptPerCm / 10)) }
+        if s.hasSuffix("pt"), let v = Double(s.dropLast(2)) { return .points(CGFloat(v)) }
+        if let v = Double(s) { return .points(CGFloat(v)) }
+        return nil
+    }
 }
 
 indirect enum TexInline {
     case text(String)
     case bold([TexInline])
     case italic([TexInline])
+    case boldItalic([TexInline])
     case underline([TexInline])
     case strikethrough([TexInline])
+    case smallcaps([TexInline])
     case code(String)
     case mathInline(String)
     case lineBreak
     case link(_ label: String, url: String)
     case footnote([TexInline])
+    // New rich inlines
+    case colored(color: TeXColor, content: [TexInline])
+    case coloredBackground(color: TeXColor, content: [TexInline])
+    case sized(size: CGFloat, content: [TexInline])
+    case ref(label: String)            // \ref{label} — resolved at typeset time
+    case eqref(label: String)          // \eqref{label}
+    case cite(keys: [String])          // \cite{key1,key2}
+    case icon(name: String)            // fontawesome icon
 }
+
 
 // MARK: - Parser
 
@@ -210,28 +396,37 @@ enum LaTeXParser {
         return messages
     }
 
-    // MARK: - Document parsing → AST
+    // MARK: - Document parsing → AST (with macro expansion)
 
-    static func parseDocument(_ source: String) -> [TexBlock] {
-        // Extract preamble for metadata
-        let preamble: String
+    static func parseDocument(_ source: String, expander: TeXExpander? = nil) -> [TexBlock] {
+        let exp = expander ?? TeXExpander()
+        let (expanded, preamble) = exp.expand(source)
+
+        // Wire packages so they can inject macros
+        var mutableExp = exp
+        PackageRegistry.shared.loadPackages(from: preamble, expander: &mutableExp)
+
+        // Re-expand with package macros
+        let (finalExpanded, _) = mutableExp.expand(source)
+
+        // Split preamble / body
+        let preambText: String
         let body: String
-        if let s = source.range(of: "\\begin{document}"),
-           let e = source.range(of: "\\end{document}") {
-            preamble = String(source[..<s.lowerBound])
-            body = String(source[s.upperBound..<e.lowerBound])
+        if let s = finalExpanded.range(of: "\\begin{document}"),
+           let e = finalExpanded.range(of: "\\end{document}") {
+            preambText = String(finalExpanded[..<s.lowerBound])
+            body = String(finalExpanded[s.upperBound..<e.lowerBound])
         } else {
-            preamble = ""
-            body = source
+            preambText = ""
+            body = finalExpanded
         }
 
         var blocks: [TexBlock] = []
 
-        // Scan preamble for \title, \author, \date
-        let title   = extractCommand("title",  from: preamble) ?? ""
-        let author  = extractCommand("author", from: preamble)
-        let date    = extractCommand("date",   from: preamble)
-        let authors = author.map { [$0] } ?? []
+        // Metadata from expander preamble
+        let title   = preamble.title.isEmpty ? (extractCommand("title",  from: preambText) ?? "") : preamble.title
+        let authors = preamble.authors.isEmpty ? [extractCommand("author", from: preambText) ?? ""].filter { !$0.isEmpty } : preamble.authors
+        let date    = preamble.date.isEmpty ? extractCommand("date", from: preambText) : preamble.date
 
         if !title.isEmpty || !authors.isEmpty {
             blocks.append(.documentMetadata(title: title, authors: authors, date: date))
@@ -240,23 +435,21 @@ enum LaTeXParser {
         // Parse body
         let bodyBlocks = parseBlocks(Substring(stripComments(body)))
 
-        // Check if \maketitle or \begin{abstract} present; insert titleBlock marker
-        let hasMaketitle = body.contains("\\maketitle")
-        if hasMaketitle || (!title.isEmpty && !body.contains("\\maketitle")) {
-            if !title.isEmpty {
-                blocks.append(.titleBlock)
-            }
+        // Inject title block only when there is NO explicit \maketitle in the body.
+        // If \maketitle is present, parseBlocks() will emit it at the right position.
+        if !title.isEmpty && !body.contains("\\maketitle") {
+            blocks.append(.titleBlock)
         }
 
         blocks.append(contentsOf: bodyBlocks)
         return blocks
     }
 
-    private static func extractCommand(_ cmd: String, from text: String) -> String? {
-        guard let r = text.range(of: "\\\\\(cmd){", options: .regularExpression) ?? text.range(of: "\\\(cmd){") else { return nil }
+    static func extractCommand(_ cmd: String, from text: String) -> String? {
+        let search = "\\\(cmd){"
+        guard let r = text.range(of: search) else { return nil }
         let after = text[r.upperBound...]
-        var depth = 1
-        var result = ""
+        var depth = 1; var result = ""
         for ch in after {
             if ch == "{" { depth += 1; result.append(ch) }
             else if ch == "}" { depth -= 1; if depth == 0 { break } else { result.append(ch) } }
@@ -264,6 +457,23 @@ enum LaTeXParser {
         }
         let stripped = result.trimmingCharacters(in: .whitespacesAndNewlines)
         return stripped.isEmpty ? nil : stripped
+    }
+
+    /// Strip all \label{...} occurrences from math content.
+    static func stripMathLabels(_ input: String) -> String {
+        var s = input
+        while let start = s.range(of: "\\label{", options: .literal) {
+            var idx = start.upperBound
+            var depth = 1
+            while idx < s.endIndex, depth > 0 {
+                if s[idx] == "{" { depth += 1 }
+                else if s[idx] == "}" { depth -= 1 }
+                if depth > 0 { idx = s.index(after: idx) }
+            }
+            let end = depth == 0 ? s.index(after: idx) : s.endIndex
+            s.removeSubrange(start.lowerBound..<end)
+        }
+        return s
     }
 
     // MARK: - Private: comment stripping
@@ -295,14 +505,14 @@ enum LaTeXParser {
     private static func isBlockStart(_ line: String) -> Bool {
         let t = line.trimmingCharacters(in: .whitespaces)
         for (cmd, _) in headingMap {
-            if t.hasPrefix(cmd + "{") || t.hasPrefix(cmd + "*{") { return true }
+            if t.hasPrefix(cmd + "{") || t.hasPrefix(cmd + "*{") || t.hasPrefix(cmd + " ") { return true }
         }
         return t.hasPrefix("\\begin{") || t.hasPrefix("\\[") || t.hasPrefix("$$")
             || t.hasPrefix("\\hline") || t.hasPrefix("\\hrule") || t.hasPrefix("\\newpage")
-            || t.hasPrefix("\\clearpage")
+            || t.hasPrefix("\\clearpage") || t.hasPrefix("\\vspace") || t.hasPrefix("\\pagebreak")
     }
 
-    private static func parseBlocks(_ input: Substring) -> [TexBlock] {
+    static func parseBlocks(_ input: Substring) -> [TexBlock] {
         var blocks: [TexBlock] = []
         var sc = input
 
@@ -314,8 +524,8 @@ enum LaTeXParser {
             if sc.hasPrefix("\\[") {
                 let body = sc.dropFirst(2)
                 if let r = body.range(of: "\\]") {
-                    blocks.append(.mathDisplay(
-                        String(body[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)))
+                    let raw = String(body[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    blocks.append(.mathDisplay(LaTeXParser.stripMathLabels(raw)))
                     sc = body[r.upperBound...]
                     continue
                 }
@@ -325,8 +535,8 @@ enum LaTeXParser {
             if sc.hasPrefix("$$") {
                 let body = sc.dropFirst(2)
                 if let r = body.range(of: "$$") {
-                    blocks.append(.mathDisplay(
-                        String(body[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)))
+                    let raw = String(body[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    blocks.append(.mathDisplay(LaTeXParser.stripMathLabels(raw)))
                     sc = body[r.upperBound...]
                     continue
                 }
@@ -335,17 +545,43 @@ enum LaTeXParser {
             // Environments
             if sc.hasPrefix("\\begin{") {
                 if let (block, rest) = parseEnvBlock(sc) {
-                    blocks.append(block)
+                    if let b = block { blocks.append(b) }
                     sc = rest
                     continue
                 }
             }
 
-            // Thematic breaks + maketitle
-            if sc.hasPrefix("\\hline") || sc.hasPrefix("\\hrule")
-                || sc.hasPrefix("\\newpage") || sc.hasPrefix("\\clearpage") {
+            // Thematic breaks
+            if sc.hasPrefix("\\hline") || sc.hasPrefix("\\hrule") {
                 blocks.append(.thematicBreak)
                 sc = sc.drop(while: { $0 != "\n" })
+                continue
+            }
+
+            if sc.hasPrefix("\\newpage") || sc.hasPrefix("\\clearpage") {
+                blocks.append(.newPage)
+                sc = sc.drop(while: { $0 != "\n" })
+                continue
+            }
+
+            if sc.hasPrefix("\\pagebreak") {
+                blocks.append(.pageBreak)
+                sc = sc.dropFirst("\\pagebreak".count)
+                continue
+            }
+
+            // vspace/hspace
+            if sc.hasPrefix("\\vspace") || sc.hasPrefix("\\vspace*") {
+                let starred = sc.hasPrefix("\\vspace*")
+                let cmd = starred ? "\\vspace*" : "\\vspace"
+                let rest = sc.dropFirst(cmd.count)
+                if let (dimStr, after) = extractBrace(rest) {
+                    let pts = parseDimension(dimStr)
+                    blocks.append(.vspace(pts))
+                    sc = after
+                } else {
+                    sc = rest
+                }
                 continue
             }
 
@@ -359,11 +595,17 @@ enum LaTeXParser {
             var foundHeading = false
             for (cmd, level) in headingMap {
                 let star = cmd + "*"
-                if sc.hasPrefix(star + "{") || sc.hasPrefix(cmd + "{") {
-                    let numbered = !sc.hasPrefix(star + "{")
-                    let skip = sc.hasPrefix(star + "{") ? star.count : cmd.count
-                    let rest = sc.dropFirst(skip)
-                    if let (title, after) = extractBrace(rest) {
+                if sc.hasPrefix(star + "{") || sc.hasPrefix(cmd + "{") ||
+                   sc.hasPrefix(star + " ") || sc.hasPrefix(cmd + " ") {
+                    let numbered = !(sc.hasPrefix(star + "{") || sc.hasPrefix(star + " "))
+                    let skipLen = (sc.hasPrefix(star + "{") || sc.hasPrefix(star + " ")) ? star.count : cmd.count
+                    let rest = sc.dropFirst(skipLen)
+                    // optional short title [...]
+                    var afterOpt = rest
+                    if afterOpt.first == "[" {
+                        afterOpt = afterOpt.drop(while: { $0 != "]" }).dropFirst()
+                    }
+                    if let (title, after) = extractBrace(afterOpt) {
                         blocks.append(.heading(level: level, numbered: numbered,
                                                inlines: parseInlines(Substring(title))))
                         sc = after
@@ -375,12 +617,28 @@ enum LaTeXParser {
             if foundHeading { continue }
 
             // Skip isolated block commands with no visible output
-            let skipCmds = ["\\maketitle", "\\tableofcontents", "\\listoffigures",
-                            "\\listoftables", "\\printbibliography"]
+            let skipCmds = [
+                "\\tableofcontents", "\\listoffigures", "\\listoftables",
+                "\\printbibliography", "\\bibliographystyle", "\\bibliography",
+                "\\pagestyle", "\\thispagestyle", "\\setcounter", "\\addtocounter",
+                "\\pagenumbering", "\\setlength", "\\addtolength", "\\settowidth",
+                "\\columnsep", "\\columnseprule", "\\parindent", "\\parskip",
+                "\\baselineskip", "\\linespread", "\\frenchspacing",
+                "\\makeatletter", "\\makeatother",
+                // Document-metadata commands that may appear in the body (LNCS, beamer, etc.)
+                // They are already captured by TeXExpander and should not render as text.
+                "\\title", "\\author", "\\authorrunning", "\\institute",
+                "\\date", "\\thanks", "\\subtitle", "\\keywords",
+                "\\affiliation", "\\email", "\\orcidID",
+            ]
             var skipped = false
             for cmd in skipCmds {
                 if sc.hasPrefix(cmd) {
-                    sc = sc.drop(while: { $0 != "\n" })
+                    // Also skip optional [arg] and required {arg}
+                    var rest = sc.dropFirst(cmd.count)
+                    if rest.first == "[" { rest = rest.drop(while: { $0 != "]" }).dropFirst() }
+                    if rest.first == "{" { if let (_, r) = extractBrace(rest) { rest = r } }
+                    sc = rest
                     skipped = true
                     break
                 }
@@ -417,7 +675,8 @@ enum LaTeXParser {
 
     // MARK: - Private: environment parsing
 
-    private static func parseEnvBlock(_ sc: Substring) -> (TexBlock, Substring)? {
+    /// Returns (block?, rest). block=nil means silently consumed (comment, abstract handled elsewhere)
+    private static func parseEnvBlock(_ sc: Substring) -> (TexBlock?, Substring)? {
         guard sc.hasPrefix("\\begin{") else { return nil }
         let nameStart = sc.dropFirst("\\begin{".count)
         guard let nameEnd = nameStart.firstIndex(of: "}") else { return nil }
@@ -426,78 +685,309 @@ enum LaTeXParser {
 
         guard let (body, rest) = findMatchingEnd(afterOpen, name: name) else { return nil }
 
-        let block: TexBlock
+        // tcolorbox — parse options from opening line
+        if name == "tcolorbox" {
+            // Options may be in [...] right after \begin{tcolorbox}
+            var opts = TcolorboxOptions(parsing: "")
+            var innerBody = afterOpen
+            if afterOpen.first == "[" {
+                let afterBracket = afterOpen.dropFirst()
+                var bracketContent = ""
+                var d = 1
+                var idx = afterBracket.startIndex
+                while idx < afterBracket.endIndex {
+                    let c = afterBracket[idx]
+                    if c == "[" { d += 1 } else if c == "]" { d -= 1; if d == 0 { break } }
+                    bracketContent.append(c)
+                    idx = afterBracket.index(after: idx)
+                }
+                opts = TcolorboxOptions(parsing: bracketContent)
+                if let restBody = findMatchingEnd(afterBracket[afterBracket.index(after: idx)...], name: name) {
+                    let content = parseBlocks(restBody.0)
+                    return (.tcolorboxBlock(options: opts, content: content), restBody.1)
+                }
+            }
+            let content = parseBlocks(body)
+            return (.tcolorboxBlock(options: opts, content: content), rest)
+        }
+
+        let block: TexBlock?
         switch name {
         case "verbatim", "lstlisting", "minted", "Verbatim", "alltt":
-            block = .codeBlock(String(body).trimmingCharacters(in: CharacterSet(charactersIn: "\n")))
+            // Extract optional lstlisting options
+            var optsStr = ""
+            var trueBody = body
+            if name == "lstlisting" || name == "minted" {
+                let afterBegin = afterOpen
+                if afterBegin.first == "[" {
+                    let ab = afterBegin.dropFirst()
+                    optsStr = String(ab.prefix(while: { $0 != "]" }))
+                    if let nb = findMatchingEnd(ab.drop(while: { $0 != "}" }).dropFirst(), name: name) {
+                        trueBody = nb.0
+                    }
+                }
+            }
+            let opts = ListingsOptions(parsing: optsStr)
+            block = .verbatimBlock(code: String(trueBody).trimmingCharacters(in: CharacterSet(charactersIn: "\n")),
+                                   options: opts)
+        case "lstlisting":
+            block = .verbatimBlock(code: String(body).trimmingCharacters(in: CharacterSet(charactersIn: "\n")),
+                                   options: ListingsOptions(parsing: ""))
         case "equation", "equation*", "align", "align*", "gather", "gather*",
-             "multline", "multline*", "eqnarray", "eqnarray*", "math", "displaymath":
-            block = .mathDisplay(String(body).trimmingCharacters(in: .whitespacesAndNewlines))
-        case "itemize", "description":
-            block = .bulletList(items: parseItems(body))
+             "multline", "multline*", "eqnarray", "eqnarray*", "math", "displaymath",
+             "flalign", "flalign*", "alignat", "alignat*":
+            let mathRaw = String(body).trimmingCharacters(in: .whitespacesAndNewlines)
+            block = .mathDisplay(LaTeXParser.stripMathLabels(mathRaw).trimmingCharacters(in: .whitespacesAndNewlines))
+        case "itemize":
+            let (items, opts) = parseItemsWithOptions(body, defaultLabel: "•")
+            block = .bulletList(items: items, options: opts)
         case "enumerate":
-            block = .numberedList(items: parseItems(body))
+            let (items, opts) = parseItemsWithOptions(body, defaultLabel: nil)
+            block = .numberedList(items: items, options: opts)
+        case "description":
+            block = .descriptionList(items: parseDescriptionItems(body))
         case "abstract":
             block = .abstract(parseBlocks(body))
         case "quote", "quotation":
             block = .blockQuote(parseBlocks(body))
         case "figure", "figure*":
-            // Try to extract \includegraphics and \caption
-            let bodyStr = String(body)
-            let src = extractCommand("includegraphics", from: bodyStr)
-            let captionText = extractCommand("caption", from: bodyStr) ?? ""
-            let captionInlines: [TexInline] = captionText.isEmpty ? [] : [.text(captionText)]
-            block = .figure(src: src, caption: captionInlines)
+            block = parseFigureEnv(body: body)
+        case "table", "table*", "wraptable":
+            block = parseTableEnv(body: body)
         case "tabular", "tabular*", "tabulary", "tabularx", "longtable":
-            // Parse the optional column spec and table rows
-            var spec = ""
-            var bodyRest = afterOpen
-            // Skip optional size arg for tabular*
-            if name == "tabular*" || name == "tabulary" || name == "tabularx",
-               let (_, a2) = extractBrace(bodyRest) { bodyRest = a2 }
-            if let (s, a2) = extractBrace(bodyRest) { spec = s; _ = a2 }
-            block = parseTabular(body: body, spec: spec)
+            block = parseTabularDetailed(body: body, afterOpen: afterOpen, name: name)
+        case "center":
+            let inner = parseBlocks(body)
+            block = inner.isEmpty ? nil : (inner.count == 1 ? inner[0] : .blockQuote(inner))
+        case "minipage", "boxminipage", "framed", "shaded", "mdframed":
+            let inner = parseBlocks(body)
+            block = inner.isEmpty ? nil : (inner.count == 1 ? inner[0] : .blockQuote(inner))
+        case "comment":
+            block = nil  // silently drop comment environments
+        case "multicols", "twocolumn":
+            block = .blockQuote(parseBlocks(body))
+        case "theorem", "lemma", "corollary", "definition", "proof", "remark",
+             "proposition", "example", "exercise", "solution", "notation":
+            // Extract optional [title] from start of body
+            var envBody = body
+            var optTitle: String? = nil
+            let bodyTrimmed = envBody.drop(while: { $0.isWhitespace || $0.isNewline })
+            if bodyTrimmed.first == "[" {
+                var title = ""; var depth = 0
+                var idx = bodyTrimmed.index(after: bodyTrimmed.startIndex)
+                while idx < bodyTrimmed.endIndex {
+                    let c = bodyTrimmed[idx]
+                    if c == "[" { depth += 1; title.append(c) }
+                    else if c == "]" {
+                        if depth == 0 {
+                            envBody = bodyTrimmed[bodyTrimmed.index(after: idx)...]
+                            break
+                        }
+                        depth -= 1; title.append(c)
+                    } else { title.append(c) }
+                    idx = bodyTrimmed.index(after: idx)
+                }
+                optTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let envNameCapitalized = name.prefix(1).uppercased() + name.dropFirst()
+            var headerInlines: [TexInline] = [.bold([.text(envNameCapitalized)])]
+            if let t = optTitle, !t.isEmpty {
+                headerInlines += [.text(" ("), .italic([.text(t)]), .text(")")]
+            }
+            headerInlines.append(.text("."))
+            let headerPara = TexBlock.paragraph(headerInlines)
+            let innerBlocks = parseBlocks(envBody)
+            block = .blockQuote([headerPara] + innerBlocks)
+        case "IEEEkeywords", "keywords":
+            let kw = parseInlines(body)
+            block = .paragraph([.bold([.text("Keywords: ")]), .italic(kw)])
+
+        case "teaserfigure":
+            // Same as figure — contains \includegraphics + \caption
+            block = parseFigureEnv(body: body)
+
+        case "acks", "ACK":
+            // Acknowledgments section
+            let inner = parseBlocks(body)
+            let heading = TexBlock.heading(level: 1, numbered: false,
+                                           inlines: [.text("Acknowledgments")])
+            block = .blockQuote([heading] + inner)
+
+        case "thebibliography":
+            // Parse \bibitem entries into a numbered list
+            block = parseBibliographyEnv(body: body)
+
+        case "CCSXML":
+            // Machine-readable CCS metadata — silently drop
+            block = nil
+
+        case "algorithm", "algorithm2e", "algorithmic", "algorithmicx", "pseudocode":
+            // Render as verbatim-ish code block
+            let cleaned = String(body).trimmingCharacters(in: .whitespacesAndNewlines)
+            block = .verbatimBlock(code: cleaned, options: ListingsOptions(parsing: ""))
+
         default:
             let inner = parseBlocks(body)
-            if inner.isEmpty { return (TexBlock.thematicBreak, rest) }
+            if inner.isEmpty { return (nil, rest) }
             block = inner.count == 1 ? inner[0] : .blockQuote(inner)
         }
         return (block, rest)
     }
 
-    private static func parseTabular(body: Substring, spec: String) -> TexBlock {
-        // Split body into rows by \\ or \hline
-        let rowSeparators = ["\\\\", "\n"]
-        var rows: [[[TexInline]]] = []
-        var header: [[TexInline]] = []
-        var isFirstRow = true
+    // MARK: - Bibliography
 
-        let bodyStr = String(body)
-        // Strip \hline and split by \\
-        let cleaned = bodyStr
-            .replacingOccurrences(of: "\\hline", with: "")
-            .replacingOccurrences(of: "\\toprule", with: "")
-            .replacingOccurrences(of: "\\midrule", with: "")
-            .replacingOccurrences(of: "\\bottomrule", with: "")
+    /// Parse \begin{thebibliography}{N} … \end{thebibliography}
+    /// Each entry: \bibitem[label]{key} <text>
+    private static func parseBibliographyEnv(body: Substring) -> TexBlock {
+        let src = String(body)
+        var entries: [[TexBlock]] = []
+        var remaining = src[...]
 
-        let tableRows = cleaned.components(separatedBy: "\\\\")
-        for rowStr in tableRows {
-            let t = rowStr.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !t.isEmpty else { continue }
-            let cells = t.components(separatedBy: "&").map { cell -> [TexInline] in
-                parseInlines(Substring(cell.trimmingCharacters(in: .whitespaces)))
+        while let bibRange = remaining.range(of: "\\bibitem") {
+            remaining = remaining[bibRange.upperBound...]
+            // Optional [label]
+            if remaining.first == "[" {
+                remaining = remaining.dropFirst()
+                remaining = remaining.drop(while: { $0 != "]" }).dropFirst()
             }
-            if isFirstRow {
-                header = cells
-                isFirstRow = false
+            // {key}
+            if let (_, afterKey) = extractBrace(Substring(remaining)) {
+                remaining = afterKey
+            }
+            // Text until next \bibitem or end
+            let nextBib = remaining.range(of: "\\bibitem")
+            let entryText: Substring
+            if let nb = nextBib {
+                entryText = remaining[..<nb.lowerBound]
             } else {
-                rows.append(cells)
+                entryText = remaining
+                remaining = remaining[remaining.endIndex...]
+            }
+            let cleaned = String(entryText).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleaned.isEmpty {
+                entries.append([.paragraph(parseInlines(Substring(cleaned)))])
             }
         }
-        return .table(header: header, rows: rows, spec: spec)
+
+        if entries.isEmpty { return .comment }
+        return .numberedList(items: entries, options: ListOptions(label: nil))
     }
 
-    private static func findMatchingEnd(_ input: Substring, name: String) -> (Substring, Substring)? {
+    private static func parseFigureEnv(body: Substring) -> TexBlock {
+        let bodyStr = String(body)
+        // Look for \includegraphics[opts]{path}
+        var src: String? = nil
+        var gfxOpts = GraphicxOptions(parsing: "")
+        if let igRange = bodyStr.range(of: "\\includegraphics") {
+            let afterIG = bodyStr[igRange.upperBound...]
+            var optsStr = ""
+            var rest2 = afterIG
+            if rest2.first == "[" {
+                let afterBr = rest2.dropFirst()
+                optsStr = String(afterBr.prefix(while: { $0 != "]" }))
+                rest2 = afterBr.drop(while: { $0 != "]" }).dropFirst()
+                gfxOpts = GraphicxOptions(parsing: optsStr)
+            }
+            if let (path, _) = extractBrace(Substring(rest2)) { src = path }
+        }
+        let captionText = extractCommand("caption", from: bodyStr) ?? ""
+        let labelText   = extractCommand("label",   from: bodyStr)
+        let captionInlines: [TexInline] = captionText.isEmpty ? [] : parseInlines(Substring(captionText))
+        return .figureDetailed(src: src, options: gfxOpts, caption: captionInlines, label: labelText)
+    }
+
+    private static func parseTableEnv(body: Substring) -> TexBlock {
+        let bodyStr = String(body)
+        let captionText = extractCommand("caption", from: bodyStr) ?? ""
+        let labelText   = extractCommand("label",   from: bodyStr)
+
+        // Find nested tabular
+        if let tabularRange = bodyStr.range(of: "\\begin{tabular") {
+            let tabBody = Substring(bodyStr[tabularRange.lowerBound...])
+            if let (inner, _) = parseEnvBlock(tabBody) {
+                let captionInlines: [TexInline] = captionText.isEmpty ? [] : parseInlines(Substring(captionText))
+                if let innerBlock = inner {
+                    // Wrap in a blockquote so we can add caption
+                    return .blockQuote([
+                        innerBlock,
+                        captionText.isEmpty ? .thematicBreak : .paragraph([.italic([.text("Table: " + captionText)])])
+                    ])
+                }
+            }
+        }
+        return .blockQuote(parseBlocks(body))
+    }
+
+    private static func parseTabularDetailed(body: Substring, afterOpen: Substring, name: String) -> TexBlock {
+        // Consume optional size args (tabular*, tabulary, tabularx)
+        var scanAfter = afterOpen
+        var spec = ""
+        if name == "tabular*" || name == "tabulary" || name == "tabularx" {
+            if let (_, a2) = extractBrace(scanAfter) { scanAfter = a2 }
+        }
+        if let (s, _) = extractBrace(scanAfter) { spec = s }
+
+        let bodyStr = String(body)
+        let isBooktabs = bodyStr.contains("\\toprule") || bodyStr.contains("\\midrule") || bodyStr.contains("\\bottomrule")
+
+        // Parse rows
+        var rows: [TableRowData] = []
+        var currentRow: [String] = []
+        var pendingRule: TableRowData.RowKind = .none
+        var lines = bodyStr.components(separatedBy: "\\\\")
+        // Handle \hline between rows
+        var allParts: [String] = []
+        for line in lines {
+            let parts = line.components(separatedBy: "\n")
+            allParts.append(contentsOf: parts)
+        }
+
+        // Re-parse properly: split by \\ first
+        let rowStrings = bodyStr.components(separatedBy: "\\\\")
+        for rowStr in rowStrings {
+            let trimmed = rowStr.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            // Check for rule markers
+            var remaining = trimmed
+            var rule: TableRowData.RowKind = .none
+            if remaining.hasPrefix("\\toprule") { rule = .toprule; remaining = String(remaining.dropFirst("\\toprule".count)) }
+            else if remaining.hasPrefix("\\bottomrule") { rule = .bottomrule; remaining = String(remaining.dropFirst("\\bottomrule".count)) }
+            else if remaining.hasPrefix("\\midrule") { rule = .midrule; remaining = String(remaining.dropFirst("\\midrule".count)) }
+            else if remaining.hasPrefix("\\hline") { rule = .hline; remaining = String(remaining.dropFirst("\\hline".count)) }
+            remaining = remaining.trimmingCharacters(in: .whitespacesAndNewlines)
+            if remaining.isEmpty {
+                // Just a rule row
+                rows.append(TableRowData(cells: [], kind: rule, cellAlignments: []))
+                continue
+            }
+            // Also strip trailing rules
+            var trailingRule: TableRowData.RowKind = .none
+            if remaining.hasSuffix("\\toprule") { trailingRule = .toprule; remaining = String(remaining.dropLast("\\toprule".count)) }
+            else if remaining.hasSuffix("\\bottomrule") { trailingRule = .bottomrule; remaining = String(remaining.dropLast("\\bottomrule".count)) }
+            else if remaining.hasSuffix("\\midrule") { trailingRule = .midrule; remaining = String(remaining.dropLast("\\midrule".count)) }
+            else if remaining.hasSuffix("\\hline") { trailingRule = .hline; remaining = String(remaining.dropLast("\\hline".count)) }
+
+            // Also handle \hline at start of remaining
+            if remaining.hasPrefix("\\toprule") { if rule == .none { rule = .toprule }; remaining = String(remaining.dropFirst("\\toprule".count)) }
+            else if remaining.hasPrefix("\\bottomrule") { if rule == .none { rule = .bottomrule }; remaining = String(remaining.dropFirst("\\bottomrule".count)) }
+            else if remaining.hasPrefix("\\midrule") { if rule == .none { rule = .midrule }; remaining = String(remaining.dropFirst("\\midrule".count)) }
+            else if remaining.hasPrefix("\\hline") { if rule == .none { rule = .hline }; remaining = String(remaining.dropFirst("\\hline".count)) }
+            remaining = remaining.trimmingCharacters(in: .whitespacesAndNewlines)
+            if remaining.isEmpty {
+                rows.append(TableRowData(cells: [], kind: rule, cellAlignments: []))
+                if trailingRule != .none { rows.append(TableRowData(cells: [], kind: trailingRule, cellAlignments: [])) }
+                continue
+            }
+            let cells = remaining.components(separatedBy: "&").map { $0.trimmingCharacters(in: .whitespaces) }
+            let cellInlines = cells.map { parseInlines(Substring($0)) }
+            rows.append(TableRowData(cells: cellInlines, kind: rule, cellAlignments: []))
+            if trailingRule != .none { rows.append(TableRowData(cells: [], kind: trailingRule, cellAlignments: [])) }
+        }
+
+        return .tableDetailed(rows: rows, spec: spec, booktabs: isBooktabs)
+    }
+
+    static func findMatchingEnd(_ input: Substring, name: String) -> (Substring, Substring)? {
         let beginTag = "\\begin{\(name)}"
         let endTag   = "\\end{\(name)}"
         var sc    = input
@@ -522,14 +1012,51 @@ enum LaTeXParser {
         return nil
     }
 
-    private static func parseItems(_ content: Substring) -> [[TexBlock]] {
-        String(content).components(separatedBy: "\\item")
+    private static func parseItemsWithOptions(_ content: Substring,
+                                               defaultLabel: String?) -> ([[TexBlock]], ListOptions) {
+        let str = String(content)
+        var opts = ListOptions()
+        var bodyStr = str
+
+        // Extract options from \begin{itemize}[...] — already consumed by caller, but sometimes inline
+        // Check if content starts with optional arg
+        let trimmed = str.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("[") {
+            let afterBr = trimmed.dropFirst()
+            let optsStr = String(afterBr.prefix(while: { $0 != "]" }))
+            opts = ListOptions(parsing: optsStr)
+            if let idx = trimmed.firstIndex(of: "]") {
+                bodyStr = String(trimmed[trimmed.index(after: idx)...])
+            }
+        }
+
+        let items = bodyStr.components(separatedBy: "\\item")
             .dropFirst()
             .compactMap { part -> [TexBlock]? in
-                let t = part.trimmingCharacters(in: .whitespacesAndNewlines)
+                var t = part.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Strip per-item optional [label]
+                if t.hasPrefix("[") { t = String(t.drop(while: { $0 != "]" }).dropFirst()) }
                 guard !t.isEmpty else { return nil }
                 return parseBlocks(Substring(t))
             }
+        return (items, opts)
+    }
+
+    private static func parseDescriptionItems(_ content: Substring) -> [(label: [TexInline], body: [TexBlock])] {
+        let parts = String(content).components(separatedBy: "\\item")
+        return parts.dropFirst().compactMap { part -> (label: [TexInline], body: [TexBlock])? in
+            let trimmed = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("[") {
+                let afterBr = trimmed.dropFirst()
+                let labelStr = String(afterBr.prefix(while: { $0 != "]" }))
+                let afterLabel = afterBr.drop(while: { $0 != "]" }).dropFirst()
+                let label = parseInlines(Substring(labelStr))
+                let body  = parseBlocks(Substring(afterLabel.trimmingCharacters(in: .whitespacesAndNewlines)))
+                return (label: label, body: body)
+            }
+            let body = parseBlocks(Substring(trimmed))
+            return body.isEmpty ? nil : (label: [], body: body)
+        }
     }
 
     // MARK: - Private: inline parsing
@@ -554,10 +1081,19 @@ enum LaTeXParser {
             if sc.hasPrefix("\\}") { buf += "}"; sc = sc.dropFirst(2); continue }
             if sc.hasPrefix("\\_") { buf += "_"; sc = sc.dropFirst(2); continue }
             if sc.hasPrefix("\\^") { buf += "^"; sc = sc.dropFirst(2); continue }
+            if sc.hasPrefix("\\~") { buf += "~"; sc = sc.dropFirst(2); continue }
+            if sc.hasPrefix("\\`") { buf += "`"; sc = sc.dropFirst(2); continue }
+            if sc.hasPrefix("\\'") { buf += "'"; sc = sc.dropFirst(2); continue }
 
             // Em/en dashes
             if sc.hasPrefix("---") { buf += "\u{2014}"; sc = sc.dropFirst(3); continue }
             if sc.hasPrefix("--")  { buf += "\u{2013}"; sc = sc.dropFirst(2); continue }
+
+            // Opening/closing quotes
+            if sc.hasPrefix("``") { buf += "\u{201C}"; sc = sc.dropFirst(2); continue }
+            if sc.hasPrefix("''") { buf += "\u{201D}"; sc = sc.dropFirst(2); continue }
+            if sc.hasPrefix("`")  { buf += "\u{2018}"; sc = sc.dropFirst(1); continue }
+            if sc.hasPrefix("'")  { buf += "\u{2019}"; sc = sc.dropFirst(1); continue }
 
             // Non-breaking space
             if sc.first == "~" { buf += "\u{00A0}"; sc = sc.dropFirst(); continue }
@@ -589,15 +1125,23 @@ enum LaTeXParser {
                     if let (a, r) = extractBrace(afterName) {
                         flush(); result.append(.italic(parseInlines(Substring(a)))); sc = r; continue
                     }
+                case "textbfit", "textitbf":
+                    if let (a, r) = extractBrace(afterName) {
+                        flush(); result.append(.boldItalic(parseInlines(Substring(a)))); sc = r; continue
+                    }
                 case "underline":
                     if let (a, r) = extractBrace(afterName) {
                         flush(); result.append(.underline(parseInlines(Substring(a)))); sc = r; continue
                     }
-                case "sout", "st":
+                case "sout", "st", "cancel", "xcancel":
                     if let (a, r) = extractBrace(afterName) {
                         flush(); result.append(.strikethrough(parseInlines(Substring(a)))); sc = r; continue
                     }
-                case "texttt":
+                case "textsc", "textsmallcaps":
+                    if let (a, r) = extractBrace(afterName) {
+                        flush(); result.append(.smallcaps(parseInlines(Substring(a)))); sc = r; continue
+                    }
+                case "texttt", "texttt":
                     if let (a, r) = extractBrace(afterName) {
                         flush(); result.append(.code(a)); sc = r; continue
                     }
@@ -623,34 +1167,141 @@ enum LaTeXParser {
                         flush(); result.append(.footnote(parseInlines(Substring(a)))); sc = r; continue
                     }
                 case "textcolor", "color":
-                    if let (_, a2) = extractBrace(afterName), let (txt, r) = extractBrace(a2) {
-                        flush(); result.append(contentsOf: parseInlines(Substring(txt))); sc = r; continue
+                    // \textcolor{color_name}{text} or \textcolor[model]{spec}{text}
+                    var colorSpec = ""
+                    var rest = afterName
+                    if rest.first == "[" {
+                        // [model] — skip model for now
+                        rest = rest.drop(while: { $0 != "]" }).dropFirst()
                     }
-                case "mbox", "hbox", "text", "textrm", "textnormal", "textsc", "textup":
+                    if let (cname, a2) = extractBrace(rest),
+                       let (txt, r) = extractBrace(a2) {
+                        flush()
+                        let color = TeXColor.resolve(cname)
+                        result.append(.colored(color: color, content: parseInlines(Substring(txt))))
+                        sc = r; continue
+                    }
+                case "colorbox":
+                    if let (cname, a2) = extractBrace(afterName),
+                       let (txt, r) = extractBrace(a2) {
+                        flush()
+                        let color = TeXColor.resolve(cname)
+                        result.append(.coloredBackground(color: color, content: parseInlines(Substring(txt))))
+                        sc = r; continue
+                    }
+                case "fcolorbox":
+                    // \fcolorbox{frame}{bg}{text}
+                    if let (_, a2) = extractBrace(afterName),
+                       let (bgName, a3) = extractBrace(a2),
+                       let (txt, r) = extractBrace(a3) {
+                        flush()
+                        let color = TeXColor.resolve(bgName)
+                        result.append(.coloredBackground(color: color, content: parseInlines(Substring(txt))))
+                        sc = r; continue
+                    }
+                case "ref", "pageref":
+                    if let (a, r) = extractBrace(afterName) {
+                        flush(); result.append(.ref(label: a)); sc = r; continue
+                    }
+                case "eqref":
+                    if let (a, r) = extractBrace(afterName) {
+                        flush(); result.append(.eqref(label: a)); sc = r; continue
+                    }
+                case "cite", "citep", "citet", "citealp", "parencite", "textcite",
+                     "autocite", "citealt", "citenum":
+                    // skip optional args
+                    var rest = afterName
+                    if rest.first == "[" { rest = rest.drop(while: { $0 != "]" }).dropFirst() }
+                    if rest.first == "[" { rest = rest.drop(while: { $0 != "]" }).dropFirst() }
+                    if let (keys, r) = extractBrace(rest) {
+                        flush()
+                        let keyList = keys.components(separatedBy: ",")
+                            .map { $0.trimmingCharacters(in: .whitespaces) }
+                            .filter { !$0.isEmpty }
+                        result.append(.cite(keys: keyList))
+                        sc = r; continue
+                    }
+                case "label":
+                    // Labels are consumed but not rendered inline
+                    if let (_, r) = extractBrace(afterName) { sc = r; continue }
+                case "mbox", "hbox", "text", "textrm", "textnormal", "textup", "textsf", "textmd":
                     if let (a, r) = extractBrace(afterName) {
                         flush(); result.append(contentsOf: parseInlines(Substring(a))); sc = r; continue
                     }
-                case "noindent", "newline", "par":
+                case "noindent":
+                    flush(); sc = afterName; continue
+                case "newline", "par", "break":
                     flush(); result.append(.lineBreak); sc = afterName; continue
                 case "LaTeX":
                     buf += "LaTeX"; sc = afterName; continue
                 case "TeX":
                     buf += "TeX"; sc = afterName; continue
-                case "ldots", "dots", "cdots":
-                    buf += "\u{2026}"; sc = afterName; continue
-                case "mdash":
-                    buf += "\u{2014}"; sc = afterName; continue
-                case "ndash":
-                    buf += "\u{2013}"; sc = afterName; continue
-                case "":
-                    break  // bare backslash — fall through to consume char
-                default:
-                    // Unknown command: skip optional args silently
-                    var rest = afterName
-                    if rest.first == "[", let end = rest.firstIndex(of: "]") {
-                        rest = rest[rest.index(after: end)...]
+                case "ldots", "dots", "cdots", "hdots", "vdots", "ddots":
+                    buf += "…"; sc = afterName; continue
+                case "mdash": buf += "—"; sc = afterName; continue
+                case "ndash": buf += "–"; sc = afterName; continue
+                case "quad":  buf += "  "; sc = afterName; continue
+                case "qquad": buf += "    "; sc = afterName; continue
+                case "thinspace", ",": buf += "\u{2009}"; sc = afterName; continue
+                case "enspace": buf += "\u{2002}"; sc = afterName; continue
+                case "!": sc = afterName; continue  // negative thin space
+                case "copyright": buf += "©"; sc = afterName; continue
+                case "registered": buf += "®"; sc = afterName; continue
+                case "trademark": buf += "™"; sc = afterName; continue
+                case "S", "S": buf += "§"; sc = afterName; continue
+                case "P": buf += "¶"; sc = afterName; continue
+                case "dagger": buf += "†"; sc = afterName; continue
+                case "ddagger": buf += "‡"; sc = afterName; continue
+                case "bullet": buf += "•"; sc = afterName; continue
+                case "textbackslash": buf += "\\"; sc = afterName; continue
+                case "textasciitilde": buf += "~"; sc = afterName; continue
+                case "textasciicircum": buf += "^"; sc = afterName; continue
+                case "texttimes": buf += "×"; sc = afterName; continue
+                case "textpm": buf += "±"; sc = afterName; continue
+                case "textdegree": buf += "°"; sc = afterName; continue
+                case "textmu": buf += "μ"; sc = afterName; continue
+                case "today": buf += TeXExpander.todayString(); sc = afterName; continue
+                // Size commands
+                case "tiny", "scriptsize", "footnotesize", "small", "normalsize",
+                     "large", "Large", "LARGE", "huge", "Huge":
+                    let sizes: [String: CGFloat] = [
+                        "tiny": 5, "scriptsize": 7, "footnotesize": 8, "small": 9,
+                        "normalsize": 10, "large": 12, "Large": 14, "LARGE": 17,
+                        "huge": 20, "Huge": 25
+                    ]
+                    let sz = sizes[cmdName] ?? 10
+                    if let (a, r) = extractBrace(afterName) {
+                        flush(); result.append(.sized(size: sz, content: parseInlines(Substring(a))))
+                        sc = r; continue
+                    } else {
+                        // Declaration form — affects rest of group
+                        sc = afterName; continue
                     }
-                    if rest.first == "{" { if let (_, r) = extractBrace(rest) { rest = r } }
+                case "textsuperscript":
+                    if let (a, r) = extractBrace(afterName) {
+                        flush(); result.append(.mathInline("^{\\text{\(a)}}")); sc = r; continue
+                    }
+                case "textsubscript":
+                    if let (a, r) = extractBrace(afterName) {
+                        flush(); result.append(.mathInline("_{\\text{\(a)}}")); sc = r; continue
+                    }
+                case "":
+                    break
+                default:
+                    // Unknown command: skip optional args silently, keep braced content
+                    var rest = afterName
+                    if rest.first == "[" { rest = rest.drop(while: { $0 != "]" }).dropFirst() }
+                    if rest.first == "{" {
+                        if let (content, r) = extractBrace(rest) {
+                            // Show content for unknown commands that wrap text
+                            let trimContent = content.trimmingCharacters(in: .whitespaces)
+                            if !trimContent.isEmpty && !trimContent.hasPrefix("\\") {
+                                flush()
+                                result.append(contentsOf: parseInlines(Substring(content)))
+                            }
+                            rest = r
+                        }
+                    }
                     sc = rest; continue
                 }
             }
@@ -666,8 +1317,10 @@ enum LaTeXParser {
     // MARK: - Private: brace extraction
 
     static func extractBrace(_ input: Substring) -> (String, Substring)? {
-        guard input.first == "{" else { return nil }
-        var sc    = input.dropFirst()
+        var sc = input
+        sc = sc.drop(while: { $0 == " " || $0 == "\t" })
+        guard sc.first == "{" else { return nil }
+        sc = sc.dropFirst()
         var out   = ""
         var depth = 1
         while !sc.isEmpty {
@@ -688,4 +1341,20 @@ enum LaTeXParser {
         }
         return nil
     }
+
+    // MARK: - Private: dimension parsing
+
+    static func parseDimension(_ s: String) -> CGFloat {
+        let trimmed = s.trimmingCharacters(in: .whitespaces)
+        let ptPerCm = 28.3465; let ptPerIn = 72.0
+        if trimmed.hasSuffix("cm"), let v = Double(trimmed.dropLast(2)) { return CGFloat(v * ptPerCm) }
+        if trimmed.hasSuffix("in"), let v = Double(trimmed.dropLast(2)) { return CGFloat(v * ptPerIn) }
+        if trimmed.hasSuffix("mm"), let v = Double(trimmed.dropLast(2)) { return CGFloat(v * ptPerCm / 10) }
+        if trimmed.hasSuffix("pt"), let v = Double(trimmed.dropLast(2)) { return CGFloat(v) }
+        if trimmed.hasSuffix("em"), let v = Double(trimmed.dropLast(2)) { return CGFloat(v * 10) }
+        if trimmed.hasSuffix("ex"), let v = Double(trimmed.dropLast(2)) { return CGFloat(v * 6) }
+        if let v = Double(trimmed) { return CGFloat(v) }
+        return 0
+    }
+
 }

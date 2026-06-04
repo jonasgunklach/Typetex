@@ -120,6 +120,22 @@ enum TeXPageRenderer {
                         in: ctx, paperH: bounds.height)
         }
 
+        // Column separator rule for two-column layouts
+        if geometry.columnCount == 2 {
+            let sepX = geometry.marginLeft + geometry.columnWidth + geometry.columnSep / 2
+            let ruleTop    = geometry.marginTop
+            let ruleBottom = geometry.paperHeight - geometry.marginBottom
+            let ruleTopFlipped    = bounds.height - ruleTop
+            let ruleBottomFlipped = bounds.height - ruleBottom
+            ctx.saveGState()
+            ctx.setStrokeColor(CGColor(gray: 0.5, alpha: 0.35))
+            ctx.setLineWidth(0.4)
+            ctx.move(to: CGPoint(x: sepX, y: ruleBottomFlipped))
+            ctx.addLine(to: CGPoint(x: sepX, y: ruleTopFlipped))
+            ctx.strokePath()
+            ctx.restoreGState()
+        }
+
         ctx.restoreGState()
     }
 
@@ -127,16 +143,13 @@ enum TeXPageRenderer {
                                      fonts: TeXFontConfig, in ctx: CGContext, paperH: CGFloat) {
         switch block {
 
-        case .ctFrame(let frame, let rect):
-            // CoreText uses y-from-bottom; our rect uses y-from-top
-            let flipped = toFlipped(rect, paperH: paperH)
+        case .ctFrame(let frame, _):
+            // CTFrame paths are in Y-DOWN (typesetter) coords. CoreText requires a
+            // Y-DOWN context — flip before drawing so glyphs are right-side-up.
             ctx.saveGState()
             ctx.textMatrix = .identity
-            // Translate so CoreText draws in the right place
             ctx.translateBy(x: 0, y: paperH)
             ctx.scaleBy(x: 1, y: -1)
-            // Now rect.minY in original = paperH - rect.maxY in CoreText coords
-            // CTFrame was built with flipped rect, so draw at origin
             CTFrameDraw(frame, ctx)
             ctx.restoreGState()
 
@@ -145,9 +158,7 @@ enum TeXPageRenderer {
             ctx.setFillColor(CGColor(gray: 0.04, alpha: 1))
             ctx.setStrokeColor(CGColor(gray: 0.04, alpha: 1))
             ctx.textMatrix = .identity
-            // Math also needs coordinate flip
-            ctx.translateBy(x: 0, y: paperH)
-            ctx.scaleBy(x: 1, y: -1)
+            // Use toFlipped coords directly — same y-up system as the context
             let flipped = toFlipped(rect, paperH: paperH)
             let origin = CGPoint(x: flipped.minX, y: flipped.minY + flipped.height * 0.2)
             MathRenderer.shared.draw(node, at: origin, style: .display,
@@ -160,27 +171,213 @@ enum TeXPageRenderer {
             ctx.setFillColor(CGColor(gray: 0.1, alpha: 1))
             ctx.fill(toFlipped(rect, paperH: paperH))
 
+        case .colorRule(let color, let rect):
+            ctx.setFillColor(color)
+            ctx.fill(toFlipped(rect, paperH: paperH))
+
         case .titleBlock(let tb):
             renderTitleBlock(tb, fonts: fonts, in: ctx, paperH: paperH)
+
+        case .imageBlock(let imgData):
+            renderImageBlock(imgData, in: ctx, paperH: paperH)
+
+        case .tableGrid(let tableData):
+            renderTableGrid(tableData, in: ctx, paperH: paperH, fonts: fonts)
+
+        case .tcolorboxBlock(let boxData):
+            renderTcolorbox(boxData, in: ctx, paperH: paperH, fonts: fonts)
+
+        case .pageNumberBlock(let number, let rect):
+            ctx.saveGState()
+            ctx.textMatrix = .identity
+            ctx.translateBy(x: 0, y: paperH)
+            ctx.scaleBy(x: 1, y: -1)
+            let sz: CGFloat = fonts.bodySize * 0.9
+            let font = CTFontCreateWithName(fonts.bodyFace as CFString, sz, nil)
+            let para = NSMutableParagraphStyle(); para.alignment = .center
+            let attrs: [NSAttributedString.Key: Any] = [
+                kCTFontAttributeName as NSAttributedString.Key: font,
+                NSAttributedString.Key.paragraphStyle: para,
+                kCTForegroundColorFromContextAttributeName as NSAttributedString.Key: true
+            ]
+            let numStr = NSAttributedString(string: "\(number)", attributes: attrs)
+            let path   = CGPath(rect: rect, transform: nil)
+            let fs     = CTFramesetterCreateWithAttributedString(numStr as CFAttributedString)
+            let frame  = CTFramesetterCreateFrame(fs, CFRangeMake(0, 0), path, nil)
+            CTFrameDraw(frame, ctx)
+            ctx.restoreGState()
 
         case .verticalSpace:
             break
 
         case .columnBreak:
             break
+
+        default:
+            break
         }
+    }
+
+    // MARK: - Image block
+
+    private static func renderImageBlock(_ imgData: ImageBlockData,
+                                          in ctx: CGContext, paperH: CGFloat) {
+        let rect = toFlipped(imgData.rect, paperH: paperH)
+        ctx.saveGState()
+        if let img = imgData.cgImage {
+            ctx.draw(img, in: rect)
+        } else {
+            // Placeholder grey box with diagonal cross
+            ctx.setFillColor(CGColor(gray: 0.85, alpha: 1))
+            ctx.fill(rect)
+            ctx.setStrokeColor(CGColor(gray: 0.6, alpha: 1))
+            ctx.setLineWidth(0.5)
+            ctx.stroke(rect)
+            ctx.move(to: rect.origin)
+            ctx.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            ctx.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+            ctx.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            ctx.strokePath()
+        }
+        ctx.restoreGState()
+    }
+
+    // MARK: - Table grid
+
+    private static func renderTableGrid(_ tableData: TableGridData,
+                                         in ctx: CGContext, paperH: CGFloat,
+                                         fonts: TeXFontConfig) {
+        let tableRect = toFlipped(tableData.rect, paperH: paperH)
+        ctx.saveGState()
+
+        // Background
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(tableRect)
+
+        var y = tableRect.maxY  // top of table in flipped coords
+
+        // Draw rows
+        var rowIdx = 0
+        for (ri, row) in tableData.cells.enumerated() {
+            let rowH: CGFloat = ri < tableData.rowHeights.count ? tableData.rowHeights[ri] : 20
+            let rowY = y - rowH
+
+            // Header background
+            if ri == 0 {
+                ctx.setFillColor(CGColor(gray: 0.92, alpha: 1))
+                ctx.fill(CGRect(x: tableRect.minX, y: rowY, width: tableRect.width, height: rowH))
+            }
+
+            var x = tableRect.minX
+            for (ci, cell) in row.enumerated() {
+                let colW = ci < tableData.columnWidths.count ? tableData.columnWidths[ci] : 60
+                let pad: CGFloat = 4
+                let cellRect = CGRect(x: x + pad, y: rowY + pad,
+                                      width: colW - pad * 2, height: rowH - pad * 2)
+                ctx.saveGState()
+                ctx.textMatrix = .identity
+                // cellRect is already in y-up coords — draw directly, no per-cell flip
+                let path  = CGPath(rect: cellRect, transform: nil)
+                let fs    = CTFramesetterCreateWithAttributedString(cell.content as CFAttributedString)
+                let frame = CTFramesetterCreateFrame(fs, CFRangeMake(0,0), path, nil)
+                CTFrameDraw(frame, ctx)
+                ctx.restoreGState()
+                x += colW
+            }
+
+            // Draw row separator
+            ctx.setStrokeColor(CGColor(gray: 0.7, alpha: 1))
+            ctx.setLineWidth(0.5)
+            ctx.move(to: CGPoint(x: tableRect.minX, y: rowY))
+            ctx.addLine(to: CGPoint(x: tableRect.maxX, y: rowY))
+            ctx.strokePath()
+
+            y -= rowH
+        }
+
+        // Outer border
+        ctx.setStrokeColor(CGColor(gray: 0.3, alpha: 1))
+        ctx.setLineWidth(tableData.isBooktabs ? 1.5 : 0.8)
+        ctx.stroke(tableRect)
+
+        ctx.restoreGState()
+    }
+
+    // MARK: - Tcolorbox
+
+    private static func renderTcolorbox(_ boxData: TcolorboxData,
+                                         in ctx: CGContext, paperH: CGFloat,
+                                         fonts: TeXFontConfig) {
+        let rect = toFlipped(boxData.rect, paperH: paperH)
+        ctx.saveGState()
+
+        // Background
+        ctx.setFillColor(boxData.background)
+        let path = CGPath(roundedRect: rect,
+                          cornerWidth: boxData.cornerRadius,
+                          cornerHeight: boxData.cornerRadius, transform: nil)
+        ctx.addPath(path); ctx.fillPath()
+
+        // Border
+        ctx.setStrokeColor(boxData.borderColor)
+        ctx.setLineWidth(boxData.borderWidth)
+        ctx.addPath(path); ctx.strokePath()
+
+        // Title bar
+        let bw = boxData.borderWidth
+        if let titleStr = boxData.title {
+            let titleH = suggestHeight(titleStr, width: rect.width - bw*2) + 8
+            let titleBarRect = CGRect(x: rect.minX + bw, y: rect.maxY - titleH - bw,
+                                      width: rect.width - bw*2, height: titleH)
+            ctx.setFillColor(boxData.titleBackground)
+            ctx.fill(titleBarRect)
+
+            // Title text — flip context for CoreText; convert titleBarRect back to Y-DOWN.
+            ctx.saveGState()
+            ctx.textMatrix = .identity
+            ctx.translateBy(x: 0, y: paperH)
+            ctx.scaleBy(x: 1, y: -1)
+            // titleBarRect is Y-UP; toFlipped converts it back to Y-DOWN coords.
+            let titleBarRectDown = toFlipped(titleBarRect, paperH: paperH)
+            let titleTextRect = CGRect(x: titleBarRectDown.minX + 4,
+                                       y: titleBarRectDown.minY + 2,
+                                       width: titleBarRectDown.width - 8,
+                                       height: titleBarRectDown.height - 4)
+            let titlePath  = CGPath(rect: titleTextRect, transform: nil)
+            let titleFs    = CTFramesetterCreateWithAttributedString(titleStr as CFAttributedString)
+            let titleFrame = CTFramesetterCreateFrame(titleFs, CFRangeMake(0,0), titlePath, nil)
+            CTFrameDraw(titleFrame, ctx)
+            ctx.restoreGState()
+        }
+
+        // Content blocks (already positioned in sub-typesetter space; need translation)
+        // For tcolorbox, content blocks are positioned relative to the box origin
+        let contentOffsetY = boxData.rect.minY + bw
+        let contentOffsetX = boxData.rect.minX + bw
+        ctx.saveGState()
+        ctx.translateBy(x: contentOffsetX, y: 0)
+        for blk in boxData.contentBlocks {
+            renderBlock(blk, geometry: DocumentGeometry.article, fonts: fonts,
+                        in: ctx, paperH: paperH)
+        }
+        ctx.restoreGState()
+
+        ctx.restoreGState()
     }
 
     private static func renderTitleBlock(_ tb: TypesetTitleBlock, fonts: TeXFontConfig,
                                           in ctx: CGContext, paperH: CGFloat) {
         ctx.saveGState()
+        // Flip to Y-DOWN so CTFrameDraw renders glyphs right-side-up.
+        ctx.textMatrix = .identity
         ctx.translateBy(x: 0, y: paperH)
         ctx.scaleBy(x: 1, y: -1)
-        ctx.textMatrix = .identity
         ctx.setFillColor(CGColor(gray: 0.04, alpha: 1))
 
-        let flipped = toFlipped(tb.rect, paperH: paperH)
-        var y = flipped.maxY  // start at bottom of flipped rect (= top in original)
+        // tb.rect is already in Y-DOWN (typesetter) coords — use directly.
+        var y = tb.rect.minY  // top of title block (Y-DOWN: small y = near top)
+        let titleX = tb.rect.minX
+        let titleW = tb.rect.width
 
         // Title
         let titleFs = fonts.bodySize * 1.9
@@ -192,12 +389,11 @@ enum TeXPageRenderer {
             NSAttributedString.Key.paragraphStyle: titlePara,
             kCTForegroundColorFromContextAttributeName as NSAttributedString.Key: true
         ])
-        let titleW = tb.rect.width
         let titleH = suggestHeight(titleAttr, width: titleW)
-        let titleRect = CGRect(x: flipped.minX, y: y - titleH, width: titleW, height: titleH)
+        let titleRect = CGRect(x: titleX, y: y, width: titleW, height: titleH)
         let titleFrame = makeFrame(titleAttr, rect: titleRect)
         CTFrameDraw(titleFrame, ctx)
-        y -= titleH + titleFs * 0.3
+        y += titleH + titleFs * 0.3
 
         // Authors
         if !tb.authors.isEmpty {
@@ -212,15 +408,15 @@ enum TeXPageRenderer {
                 kCTForegroundColorFromContextAttributeName as NSAttributedString.Key: true
             ])
             let authorH = suggestHeight(authorAttr, width: titleW)
-            let authorRect = CGRect(x: flipped.minX, y: y - authorH, width: titleW, height: authorH)
+            let authorRect = CGRect(x: titleX, y: y, width: titleW, height: authorH)
             let authorFrame = makeFrame(authorAttr, rect: authorRect)
             CTFrameDraw(authorFrame, ctx)
-            y -= authorH + authorFs * 0.4
+            y += authorH + authorFs * 0.4
         }
 
-        // Separator rule
+        // Separator rule (direct fill in flipped Y-DOWN context — coords are Y-DOWN here)
         ctx.setFillColor(CGColor(gray: 0.2, alpha: 1))
-        ctx.fill(CGRect(x: flipped.minX + 20, y: y - 0.5, width: titleW - 40, height: 0.5))
+        ctx.fill(CGRect(x: titleX + 20, y: y, width: titleW - 40, height: 0.5))
 
         ctx.restoreGState()
     }

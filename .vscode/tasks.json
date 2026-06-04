@@ -1,0 +1,94 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "generate-pdfs",
+			"type": "shell",
+			"command": "cd /Users/jonasgunklach/Documents/XCode/Typetex && swift run generate-pdfs 2>&1",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "convert-pdfs",
+			"type": "shell",
+			"command": "qlmanage -t -s 1200 -o /tmp/ /Users/jonasgunklach/Documents/XCode/Typetex/templates/article/typetex_article-full.pdf /Users/jonasgunklach/Documents/XCode/Typetex/templates/ieee/typetex_ieee-conference.pdf /Users/jonasgunklach/Documents/XCode/Typetex/templates/lncs/typetex_lncs-paper.pdf 2>/dev/null",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "check-files",
+			"type": "shell",
+			"command": "ls -la /Users/jonasgunklach/Documents/XCode/Typetex/templates/lncs/ && ls -la /Users/jonasgunklach/Documents/XCode/Typetex/templates/article/ && ls -la /tmp/typetex_*.pdf.png 2>/dev/null || echo 'no pngs'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "diagnose-lncs",
+			"type": "shell",
+			"command": "cd /Users/jonasgunklach/Documents/XCode/Typetex && swift run generate-pdfs 2>&1 | grep -E '(lncs|LNCS|✗|failed|error|Error)' || echo 'NO MATCH'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "diagnose-lncs2",
+			"type": "shell",
+			"command": "cd /Users/jonasgunklach/Documents/XCode/Typetex && swift run generate-pdfs 2>&1 | tail -10",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "diagnose-lncs3",
+			"type": "shell",
+			"command": "cd /Users/jonasgunklach/Documents/XCode/Typetex && swift run generate-pdfs > /tmp/generate_pdfs_output.txt 2>&1 && cat /tmp/generate_pdfs_output.txt | tail -15",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "read-output",
+			"type": "shell",
+			"command": "cat /tmp/generate_pdfs_output.txt 2>/dev/null | tail -20",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "build-and-generate-pdfs",
+			"type": "shell",
+			"command": "cd /Users/jonasgunklach/Documents/XCode/Typetex && swift build -target generate-pdfs && .build/debug/generate-pdfs",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "convert-pdf-to-png",
+			"type": "shell",
+			"command": "sips -s format png /Users/jonasgunklach/Documents/XCode/Typetex/templates/ieee/typetex_ieee-conference.pdf --out /tmp/typetex_ieee.png 2>&1; echo '---done---'",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "convert-ref-pdf-to-png",
+			"type": "shell",
+			"command": "sips -s format png /Users/jonasgunklach/Documents/XCode/Typetex/templates/ieee/ieee-conference.pdf --out /tmp/ref_ieee.png 2>&1; echo '---done---'",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "preview-typetex-ieee",
+			"type": "shell",
+			"command": "qlmanage -t -s 1200 -o /tmp/ '/Users/jonasgunklach/Documents/XCode/Typetex/templates/ieee/typetex_ieee-conference.pdf' 2>/dev/null; ls /tmp/*.png /tmp/*.pdf.png 2>/dev/null | head -5; echo DONE",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "build-and-generate-pdfs",
+			"type": "shell",
+			"command": "cd /Users/jonasgunklach/Documents/XCode/Typetex && swift build -target generate-pdfs 2>&1 && echo '=== BUILD OK ===' && .build/debug/generate-pdfs 2>&1",
+			"isBackground": false,
+			"group": "build"
+		}
+	]
+}

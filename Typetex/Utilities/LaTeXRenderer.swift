@@ -58,9 +58,9 @@ struct LaTeXBlockView: View {
                 .background(Color.primary.opacity(0.06))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
-        case .bulletList(let items):
+        case .bulletList(let itemsList, _):
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, itemBlocks in
+                ForEach(Array(itemsList.enumerated()), id: \.offset) { _, itemBlocks in
                     HStack(alignment: .top, spacing: 8) {
                         Text("\u{2022}").padding(.top, 1)
                         VStack(alignment: .leading, spacing: 4) {
@@ -72,9 +72,9 @@ struct LaTeXBlockView: View {
                 }
             }
 
-        case .numberedList(let items):
+        case .numberedList(let itemsList, _):
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(items.enumerated()), id: \.offset) { idx, itemBlocks in
+                ForEach(Array(itemsList.enumerated()), id: \.offset) { idx, itemBlocks in
                     HStack(alignment: .top, spacing: 8) {
                         Text("\(idx + 1).")
                             .monospacedDigit()
@@ -106,7 +106,7 @@ struct LaTeXBlockView: View {
             Divider().padding(.vertical, 8)
 
         // New cases (handled by CoreText renderer; legacy view just shows placeholders)
-        case .documentMetadata, .abstract, .titleBlock, .table, .figure:
+        default:
             EmptyView()
         }
     }
@@ -156,6 +156,8 @@ struct InlineTextView: View {
         case .footnote(let children):
             let inner = children.reduce(into: Text("")) { acc, n in acc = Text("\(acc)\(render(n))") }
             return Text(" [\(inner)]")
+        default:
+            return Text("")
         }
     }
 }

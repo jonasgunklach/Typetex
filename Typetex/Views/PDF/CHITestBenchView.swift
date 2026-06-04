@@ -214,8 +214,9 @@ struct CHITestBenchView: View {
         Task.detached(priority: .userInitiated) {
             let blocks = LaTeXParser.parseDocument(chiSampleSource)
             let typesetter = TeXTypesetter()
-            typesetter.geometry = .acmSigConf
-            typesetter.fonts    = .timesACM
+            typesetter.geometry     = .acmSigConf
+            typesetter.fonts        = .timesACM
+            typesetter.documentClass = "acmart"
             let doc = typesetter.typeset(blocks)
             await MainActor.run {
                 typesetDocument = doc

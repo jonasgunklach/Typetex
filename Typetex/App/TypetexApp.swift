@@ -35,6 +35,12 @@ struct TypetexApp: App {
         Settings {
             SettingsView()
         }
+
+        Window("Parity Test Bench", id: "parity-test") {
+            ParityTestView()
+                .frame(minWidth: 1000, minHeight: 700)
+        }
+        .defaultSize(width: 1280, height: 860)
 #endif
     }
 }

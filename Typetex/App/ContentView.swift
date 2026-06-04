@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var sidebarTab: SidebarTab = .documents
     @State private var showingSettings = false
+    @Environment(\.openWindow) private var openWindow
 
     @AppStorage("editorFontSize")   private var fontSize:   Double = 15
     @AppStorage("editorFontFamily") private var fontFamily: String = ""
@@ -80,6 +81,18 @@ struct ContentView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
+#if os(macOS)
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    openWindow(id: "parity-test")
+                } label: {
+                    Label("Parity Test", systemImage: "rectangle.split.2x1")
+                }
+                .help("Open Parity Test Bench — compare native renderer vs. reference PDFs")
+            }
+        }
+#endif
     }
 }
 

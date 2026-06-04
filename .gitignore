@@ -15,6 +15,13 @@ DerivedData/
 # Compiled static libraries — build from source (see README)
 **/*.a
 
+# Build logs
+xcodebuild.log
+xcodebuild_output.log
+
+# Rust FFI build artifacts
+tectonic-ffi/target/
+
 # macOS
 .DS_Store
 .AppleDouble

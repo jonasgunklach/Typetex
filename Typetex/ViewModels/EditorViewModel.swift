@@ -164,30 +164,86 @@ final class EditorViewModel {
     @MainActor
     func compile() async {
         guard let doc = document else { return }
-        compileState     = .compiling
-        compileMessages  = []
-        let source       = doc.content
-        renderedDocument = LaTeXParser.parseDocument(source)
-        compileMessages  = LaTeXParser.syntaxCheck(source)
+        compileState    = .compiling
+        compileMessages = []
+        let source      = doc.content
+        compileMessages = LaTeXParser.syntaxCheck(source)
+
+        // Parse the full AST
+        var blocks = LaTeXParser.parseDocument(source)
+        renderedDocument = blocks
+
+        // Build citation resolver from any .bib in the same workspace
+        let bibContent = loadBibliography(for: doc)
+        var resolver: CitationResolver? = nil
+        if let bib = bibContent {
+            resolver = CitationResolver()
+            resolver?.loadBibFile(bib)
+        }
 
         // Detect document class to choose geometry/fonts
         let geo: DocumentGeometry
         let fnt: TeXFontConfig
+        let cls: String
         if source.contains("acmart") || source.contains("sigconf") {
-            geo = .acmSigConf
-            fnt = .timesACM
+            geo = .acmSigConf;    fnt = .timesACM;   cls = "acmart"
+        } else if source.contains("ieee") || source.contains("IEEEtran") {
+            geo = .ieeeConference; fnt = .timesIEEE;  cls = "IEEEtran"
+        } else if source.contains("llncs") || source.contains("lncs") {
+            geo = .lncs;           fnt = .timesLNCS;  cls = "llncs"
         } else {
-            geo = .article
-            fnt = .palatino
+            geo = .article;        fnt = .palatino;   cls = "article"
         }
 
-        let typesetter    = TeXTypesetter()
-        typesetter.geometry = geo
-        typesetter.fonts    = fnt
-        typesetDocument   = typesetter.typeset(renderedDocument)
+        let typesetter              = TeXTypesetter()
+        typesetter.geometry         = geo
+        typesetter.fonts            = fnt
+        typesetter.documentClass    = cls
+        typesetter.citationResolver = resolver
+        typesetDocument         = typesetter.typeset(blocks)
 
         compileState = compileMessages.contains { $0.severity == .error }
             ? .failed(Date()) : .success(Date())
+    }
+
+    // MARK: - PDF Export
+
+    @MainActor
+    func exportPDF() -> Data? {
+        guard !typesetDocument.pages.isEmpty else { return nil }
+        return PDFExporter().export(typesetDocument, title: document?.title)
+    }
+
+    // MARK: - Bibliography helper
+
+    private func loadBibliography(for doc: LaTeXDocument) -> String? {
+        guard let workspace = doc.workspace,
+              let relativePath = doc.relativePath else { return nil }
+        let bookmarkData = workspace.bookmarkData
+        var isStale = false
+        let folderURL: URL
+        #if os(macOS)
+        guard let u = try? URL(resolvingBookmarkData: bookmarkData,
+                               options: .withSecurityScope,
+                               relativeTo: nil,
+                               bookmarkDataIsStale: &isStale) else { return nil }
+        guard u.startAccessingSecurityScopedResource() else { return nil }
+        defer { u.stopAccessingSecurityScopedResource() }
+        folderURL = u
+        #else
+        guard let u = try? URL(resolvingBookmarkData: bookmarkData,
+                               bookmarkDataIsStale: &isStale) else { return nil }
+        folderURL = u
+        #endif
+        // Look for .bib files in the same directory
+        let docDir = folderURL.appendingPathComponent(relativePath)
+            .deletingLastPathComponent()
+        let bibs = (try? FileManager.default.contentsOfDirectory(
+            at: docDir, includingPropertiesForKeys: nil)) ?? []
+        for bib in bibs where bib.pathExtension == "bib" {
+            if let content = try? String(contentsOf: bib, encoding: .utf8) { return content }
+        }
+        return nil
     }
 }
 
